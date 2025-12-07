@@ -1,9 +1,11 @@
-# AIAgent4elang 新手超简版
+# AIAgent4elang 使用教程
 
 适合不熟悉命令行的用户。分 Windows 和 macOS 两部分，尽量用“一键脚本”。
 
+项目地址（GitHub）：https://github.com/ChenyuHeee/AIAgent4elang
+
 ## 你需要准备
-- 一个 DeepSeek API Key（复制好）。
+- 一个 DeepSeek API Key（复制好）。没有的话先到 <https://platform.deepseek.com/api_keys> 申请获取。
 - 能上网的电脑。
 
 ## Windows（PowerShell）

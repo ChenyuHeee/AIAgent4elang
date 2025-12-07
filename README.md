@@ -2,10 +2,10 @@
 
 一个帮助自动阅读理解并答题的浏览器小助手，使用 DeepSeek 模型和 Playwright 驱动浏览器。
 
-👉 面向完全新手的超简版教程，请看 `docs/newbie-guide.md`（Windows / macOS 分步，一键脚本）。
+👉 面向完全新手的超简版教程：[点这里打开](docs/newbie-guide.md)（Windows / macOS 分步，一键脚本）。
 
 ## 快速上手（熟悉命令行的简版）
-1) 准备：在本机修改 `config.yaml`，把 `deepseek.api_key` 改成你的密钥（如 `"sk-xxx"`）。此改动别提交或上传。
+1) 准备：先申请 DeepSeek API Key（<https://platform.deepseek.com/api_keys>），再在本机修改 `config.yaml`，把 `deepseek.api_key` 改成你的密钥（如 `"sk-xxx"`）。此改动别提交或上传。
 2) 依赖：
    - macOS/Linux: `python3 -m venv .venv && source .venv/bin/activate`
    - Windows: `python -m venv .venv` 后 `.\.venv\Scripts\Activate.ps1`
