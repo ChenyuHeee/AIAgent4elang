@@ -187,6 +187,39 @@ class BrowserController:
             return out
 
         async def extract_from_frame(frame) -> Dict[str, Any]:
+            # Specialized extraction for Praxis-style pages: pick the question block closest to the viewport top
+            praxis_focus = await frame.evaluate(
+                r"""
+                (() => {
+                  const blocks = Array.from(document.querySelectorAll('.praxis-item'));
+                  if (!blocks.length) return null;
+                  let best = null;
+                  let bestDist = Number.POSITIVE_INFINITY;
+                  for (const b of blocks) {
+                    const rect = b.getBoundingClientRect();
+                    const dist = Math.abs(rect.top);
+                    if (dist < bestDist) {
+                      bestDist = dist;
+                      best = b;
+                    }
+                  }
+                  if (!best) return null;
+                  const toText = (el) => (el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : '');
+                  const question = toText(best.querySelector('.praxis-desc') || best.querySelector('.wrap-text'));
+                  const options = [];
+                  const answers = best.querySelectorAll('.praxis-info .answer');
+                  answers.forEach(a => {
+                    const title = toText(a.querySelector('.answer-title'));
+                    const desc = toText(a.querySelector('.answer-desc'));
+                    const combined = (title ? title + (desc ? '. ' + desc : '') : desc).trim();
+                    if (combined) options.push(combined);
+                  });
+                  const preview = toText(best);
+                  return { question, options, preview };
+                })();
+                """
+            )
+
             async def f_first_non_empty(selectors: list[str]) -> str:
                 for sel in selectors:
                     texts = [t.strip() for t in await frame.locator(sel).all_inner_texts()]
@@ -210,13 +243,19 @@ class BrowserController:
                         continue
                 return ""
 
-            q_text = await f_first_non_empty(question_selectors)
+            q_text = praxis_focus.get("question", "") if praxis_focus else ""
+            opts = merge_lists([], [str(o).strip() for o in praxis_focus.get("options", [])]) if praxis_focus else []
+            preview = praxis_focus.get("preview", "") if praxis_focus else ""
+
+            if not q_text:
+                q_text = await f_first_non_empty(question_selectors)
             if not q_text:
                 q_text = await f_longest_line(["main", "article", "section", "body"])
-            opts = await collect_options(option_selectors)
+            if not opts:
+                opts = await collect_options(option_selectors)
             if not opts:
                 opts = await collect_form_options_via_js()
-            # Praxis page specialized extraction (class-based)
+            # Praxis page specialized extraction (class-based) fallback if still empty
             if not opts:
                 try:
                     praxis = await frame.evaluate(
@@ -271,8 +310,9 @@ class BrowserController:
             except Exception:
                 pass
 
-            body_text = await frame.text_content("body") or ""
-            preview = " ".join(body_text.split())[:800]
+            if not preview:
+                body_text = await frame.text_content("body") or ""
+                preview = " ".join(body_text.split())[:800]
             return {"question": q_text, "options": opts, "preview": preview}
 
         main_res = await extract_from_frame(page)
