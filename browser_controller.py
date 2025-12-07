@@ -313,28 +313,35 @@ class BrowserController:
             return {"question": q_text, "options": opts, "preview": preview, "items": praxis_items or []}
 
         main_res = await extract_from_frame(page)
-        question_text = main_res["question"]
-        options = main_res["options"]
-        preview = main_res["preview"]
+        question_text = main_res.get("question", "")
+        options = main_res.get("options", [])
+        preview = main_res.get("preview", "")
+        all_items = main_res.get("items", []) or []
 
         # If no options or question empty, try iframes.
-        if (not options or not question_text) and len(page.frames) > 1:
+        if len(page.frames) > 1:
             for frame in page.frames:
                 if frame == page.main_frame:
                     continue
                 try:
                     fr_res = await extract_from_frame(frame)
-                    if not question_text and fr_res["question"]:
+                    if fr_res.get("items"):
+                        all_items.extend(fr_res["items"])
+                    if not question_text and fr_res.get("question"):
                         question_text = fr_res["question"]
-                    options = merge_lists(options, fr_res["options"])
-                    if not preview and fr_res["preview"]:
+                    options = merge_lists(options, fr_res.get("options", []))
+                    if not preview and fr_res.get("preview"):
                         preview = fr_res["preview"]
-                    if question_text and options:
-                        break
                 except Exception:
                     continue
 
-        return {"question": question_text, "options": options, "debug_body_preview": preview}
+        # If we collected multiple items, use the first one to populate question/options for backward compatibility.
+        if all_items and not question_text:
+            question_text = all_items[0].get("question", "")
+        if all_items and not options:
+            options = all_items[0].get("options", [])
+
+        return {"question": question_text, "options": options, "debug_body_preview": preview, "items": all_items}
 
     async def _auto_scroll(self, page: Page) -> None:
         # Scroll through the page to trigger lazy rendering / virtualization.
