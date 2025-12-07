@@ -82,6 +82,7 @@ async def handle_single_question(
 
     # If there are multiple praxis items, iterate through each; otherwise handle the single question.
     tasks = items if items else [{"question": question, "options": options, "preview": preview}]
+    collected_answers: List[str] = []
 
     for idx, item in enumerate(tasks, start=1):
         q = (item.get("question") or "").strip()
@@ -135,7 +136,11 @@ async def handle_single_question(
                 await browser.click_option(candidate.locator)
                 log_struct(logger, "clicked", idx=idx, locator=candidate.locator)
 
+        collected_answers.append(f"第{idx}题：{ans_text}")
+
     await browser.screenshot(str(pathlib.Path(config["paths"]["screenshots"]) / "after.png"))
+    if collected_answers:
+        print("【本页答案汇总】" + "； ".join(collected_answers))
 
 
 async def main() -> None:
