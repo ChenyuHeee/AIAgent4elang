@@ -35,8 +35,8 @@ async def handle_single_question(
     except RuntimeError:
         page = await browser.start()
     if page.is_closed():
-        raise RuntimeError("Browser closed by user")
-    input("Manual step: open the question page, then press Enter to proceed...")
+        raise RuntimeError("浏览器已关闭")
+    input("请手动在浏览器中打开题目页面，准备好后按回车继续…")
 
     dom = await browser.read_question_block()
     question = dom.get("question", "").strip()
@@ -55,7 +55,7 @@ async def handle_single_question(
             "options_missing",
             dump=str(dump_path),
             screenshot=str(screenshot_path),
-            hint="check dump for option DOM; may be iframe/shadow/root attrs",
+            hint="选项未识别：请查看 page_dump.html，可能在 iframe/shadow 里，或需要新的选择器",
         )
         return
 
@@ -69,11 +69,18 @@ async def handle_single_question(
     if not question:
         dump_path = pathlib.Path(config["paths"]["logs"]) / "page_dump.txt"
         dump_path.write_text(preview, encoding="utf-8")
-        log_struct(logger, "question_missing", hint="adjust selectors in read_question_block", dump=str(dump_path))
+        log_struct(logger, "question_missing", hint="未识别到题干，请调整 read_question_block 的选择器", dump=str(dump_path))
         return
 
     answer = await answer_question(nlp, question, options, "single")
     log_struct(logger, "model_answer", raw=answer)
+
+    ans_val = answer.get("answer")
+    if isinstance(ans_val, list):
+        ans_text = "、".join([str(a) for a in ans_val])
+    else:
+        ans_text = str(ans_val)
+    print(f"【答案】本题模型给出的答案：{ans_text}")
 
     if isinstance(answer.get("answer"), list) and options:
         first_option = answer["answer"][0]
@@ -107,11 +114,11 @@ async def main() -> None:
             try:
                 await handle_single_question(browser, nlp, ocr, logger, config)
             except RuntimeError as exc:
-                if "Browser closed" in str(exc):
+                if "浏览器已关闭" in str(exc):
                     break
                 raise
             try:
-                prompt = "Press Enter to start the next question (or close the browser window to finish)..."
+                prompt = "按回车开始下一题（直接关闭浏览器窗口则结束）…"
                 input(prompt)
             except EOFError:
                 break
