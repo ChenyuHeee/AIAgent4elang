@@ -40,7 +40,12 @@ async def handle_single_question(
     input("请手动在浏览器中打开题目页面，准备好后按回车继续…")
 
     await browser.dismiss_popups()
-    dom = await browser.read_question_block()
+    try:
+        dom = await browser.read_question_block()
+    except Exception as exc:  # noqa: BLE001
+        if "Target closed" in str(exc) or "浏览器" in str(exc):
+            raise RuntimeError("浏览器已关闭") from exc
+        raise
     question = dom.get("question", "").strip()
     options: List[str] = dom.get("options", [])
     preview = dom.get("debug_body_preview", "")

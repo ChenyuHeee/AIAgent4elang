@@ -416,7 +416,9 @@ class BrowserController:
         """Click option inside a specific .praxis-item by index (0-based). Returns True if clicked."""
         await self.dismiss_popups()
 
-        norm = lambda s: (s or "").replace("\u00a0", " ").strip()
+        def norm(s: str) -> str:
+            return " ".join((s or "").replace("\u00a0", " ").split()).strip().lower()
+
         target_text = norm(option_text)
 
         locator_item = self.page.locator(".praxis-item").nth(item_index)
@@ -426,8 +428,14 @@ class BrowserController:
             ans = answers.nth(i)
             title = norm(await ans.locator(".answer-title").text_content() or "")
             desc = norm(await ans.locator(".answer-desc").text_content() or "")
-            combined = (title + (" " + desc if desc else "")).strip() if title else desc
-            if combined == target_text or desc == target_text or title == target_text:
+            combined = (title + (" " + desc if desc else "")).strip()
+
+            def match_candidate(candidate: str) -> bool:
+                if not candidate:
+                    return False
+                return candidate == target_text or candidate in target_text or target_text in candidate
+
+            if match_candidate(combined) or match_candidate(desc) or match_candidate(title):
                 try:
                     await ans.scroll_into_view_if_needed()
                 except Exception:
