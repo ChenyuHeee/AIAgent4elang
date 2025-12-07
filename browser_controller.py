@@ -378,8 +378,20 @@ class BrowserController:
         except Exception:
             pass
 
-        # Use first() to avoid strict mode violations when multiple matches exist.
-        await self.page.locator(locator).first.click()
+        loc = self.page.locator(locator).first
+
+        # Best-effort wait before clicking.
+        try:
+            await loc.wait_for(state="visible", timeout=3000)
+        except Exception:
+            pass
+
+        try:
+            await loc.click(timeout=5000)
+            return
+        except Exception:
+            # Retry with force to bypass occasional overlay/scroll issues.
+            await loc.click(timeout=5000, force=True)
 
     async def fill_answer(self, locator: str, text: str) -> None:
         await self.page.locator(locator).fill(text)
