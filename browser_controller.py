@@ -387,11 +387,22 @@ class BrowserController:
             pass
 
         try:
-            await loc.click(timeout=5000)
+            await loc.click(timeout=6000)
             return
         except Exception:
-            # Retry with force to bypass occasional overlay/scroll issues.
-            await loc.click(timeout=5000, force=True)
+            pass
+
+        try:
+            handle = await loc.element_handle()
+            if handle:
+                await handle.scroll_into_view_if_needed()
+                await handle.click(timeout=6000, force=True)
+                return
+        except Exception:
+            pass
+
+        # Final attempt with force on locator.
+        await loc.click(timeout=6000, force=True)
 
     async def fill_answer(self, locator: str, text: str) -> None:
         await self.page.locator(locator).fill(text)
