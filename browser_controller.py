@@ -187,38 +187,35 @@ class BrowserController:
             return out
 
         async def extract_from_frame(frame) -> Dict[str, Any]:
-            # Specialized extraction for Praxis-style pages: pick the question block closest to the viewport top
-            praxis_focus = await frame.evaluate(
+            # Collect all Praxis-style question blocks on the page, keeping their order.
+            praxis_items = await frame.evaluate(
                 r"""
                 (() => {
-                  const blocks = Array.from(document.querySelectorAll('.praxis-item'));
-                  if (!blocks.length) return null;
-                  let best = null;
-                  let bestDist = Number.POSITIVE_INFINITY;
-                  for (const b of blocks) {
-                    const rect = b.getBoundingClientRect();
-                    const dist = Math.abs(rect.top);
-                    if (dist < bestDist) {
-                      bestDist = dist;
-                      best = b;
-                    }
-                  }
-                  if (!best) return null;
                   const toText = (el) => (el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : '');
-                  const question = toText(best.querySelector('.praxis-desc') || best.querySelector('.wrap-text'));
-                  const options = [];
-                  const answers = best.querySelectorAll('.praxis-info .answer');
-                  answers.forEach(a => {
-                    const title = toText(a.querySelector('.answer-title'));
-                    const desc = toText(a.querySelector('.answer-desc'));
-                    const combined = (title ? title + (desc ? '. ' + desc : '') : desc).trim();
-                    if (combined) options.push(combined);
+                  const blocks = Array.from(document.querySelectorAll('.praxis-item'));
+                  const items = blocks.map((b, idx) => {
+                    const question = toText(b.querySelector('.praxis-desc') || b.querySelector('.wrap-text'));
+                    const options = [];
+                    const answers = b.querySelectorAll('.praxis-info .answer');
+                    answers.forEach(a => {
+                      const title = toText(a.querySelector('.answer-title'));
+                      const desc = toText(a.querySelector('.answer-desc'));
+                      const combined = (title ? title + (desc ? '. ' + desc : '') : desc).trim();
+                      if (combined) options.push(combined);
+                    });
+                    const preview = toText(b);
+                    return { idx, question, options, preview };
                   });
-                  const preview = toText(best);
-                  return { question, options, preview };
+                  if (!items.length) return null;
+                  return items;
                 })();
                 """
             )
+
+            praxis_focus = None
+            if praxis_items:
+                # Pick the first Praxis block as the default focus; we'll still return all items.
+                praxis_focus = praxis_items[0]
 
             async def f_first_non_empty(selectors: list[str]) -> str:
                 for sel in selectors:
@@ -313,7 +310,7 @@ class BrowserController:
             if not preview:
                 body_text = await frame.text_content("body") or ""
                 preview = " ".join(body_text.split())[:800]
-            return {"question": q_text, "options": opts, "preview": preview}
+            return {"question": q_text, "options": opts, "preview": preview, "items": praxis_items or []}
 
         main_res = await extract_from_frame(page)
         question_text = main_res["question"]

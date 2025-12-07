@@ -42,7 +42,15 @@ async def handle_single_question(
     question = dom.get("question", "").strip()
     options: List[str] = dom.get("options", [])
     preview = dom.get("debug_body_preview", "")
-    log_struct(logger, "dom_parsed", question_len=len(question), options=len(options), preview=preview[:200])
+    items = dom.get("items", []) or []
+    log_struct(
+        logger,
+        "dom_parsed",
+        question_len=len(question),
+        options=len(options),
+        preview=preview[:200],
+        items=len(items),
+    )
 
     if not options:
         dump_path = pathlib.Path(config["paths"].get("logs", "./data/logs")) / "page_dump.html"
@@ -72,23 +80,60 @@ async def handle_single_question(
         log_struct(logger, "question_missing", hint="未识别到题干，请调整 read_question_block 的选择器", dump=str(dump_path))
         return
 
-    answer = await answer_question(nlp, question, options, "single")
-    log_struct(logger, "model_answer", raw=answer)
+    # If there are multiple praxis items, iterate through each; otherwise handle the single question.
+    tasks = items if items else [{"question": question, "options": options, "preview": preview}]
 
-    ans_val = answer.get("answer")
-    if isinstance(ans_val, list):
-        ans_text = "、".join([str(a) for a in ans_val])
-    else:
-        ans_text = str(ans_val)
-    print(f"【答案】本题模型给出的答案：{ans_text}")
+    for idx, item in enumerate(tasks, start=1):
+        q = (item.get("question") or "").strip()
+        opts_list: List[str] = item.get("options", []) or []
+        log_struct(logger, "dom_item", idx=idx, question_len=len(q), options=len(opts_list))
 
-    if isinstance(answer.get("answer"), list) and options:
-        first_option = answer["answer"][0]
-        locators = build_text_locators(str(first_option))
-        candidate = select_best(locators)
-        if candidate:
-            await browser.click_option(candidate.locator)
-            log_struct(logger, "clicked", locator=candidate.locator)
+        if not opts_list:
+            if not items:  # single-question flow keeps previous handling
+                dump_path = pathlib.Path(config["paths"].get("logs", "./data/logs")) / "page_dump.html"
+                html = await browser.page.content()
+                dump_path.write_text(html, encoding="utf-8")
+                screenshot_path = pathlib.Path(config["paths"].get("screenshots", "./data/screenshots")) / "no_options.png"
+                await browser.screenshot(str(screenshot_path))
+                log_struct(
+                    logger,
+                    "options_missing",
+                    dump=str(dump_path),
+                    screenshot=str(screenshot_path),
+                    hint="选项未识别：请查看 page_dump.html，可能在 iframe/shadow 里，或需要新的选择器",
+                )
+            continue
+
+        if not q and config.get("agent", {}).get("enable_ocr_fallback", False):
+            screenshot_path = pathlib.Path(config["paths"]["screenshots"]) / f"ocr_fallback_{idx}.png"
+            await browser.screenshot(str(screenshot_path))
+            ocr_result = await ocr.run(str(screenshot_path))
+            q = ocr_result.get("text", "")
+            log_struct(logger, "ocr_used", idx=idx, text_len=len(q))
+
+        if not q:
+            dump_path = pathlib.Path(config["paths"]["logs"]) / f"page_dump_{idx}.txt"
+            dump_path.write_text(preview, encoding="utf-8")
+            log_struct(logger, "question_missing", idx=idx, hint="未识别到题干，请调整 read_question_block 的选择器", dump=str(dump_path))
+            continue
+
+        answer = await answer_question(nlp, q, opts_list, "single")
+        log_struct(logger, "model_answer", idx=idx, raw=answer)
+
+        ans_val = answer.get("answer")
+        if isinstance(ans_val, list):
+            ans_text = "、".join([str(a) for a in ans_val])
+        else:
+            ans_text = str(ans_val)
+        print(f"【答案】第{idx}题：{ans_text}")
+
+        if isinstance(answer.get("answer"), list) and opts_list:
+            first_option = answer["answer"][0]
+            locators = build_text_locators(str(first_option))
+            candidate = select_best(locators)
+            if candidate:
+                await browser.click_option(candidate.locator)
+                log_struct(logger, "clicked", idx=idx, locator=candidate.locator)
 
     await browser.screenshot(str(pathlib.Path(config["paths"]["screenshots"]) / "after.png"))
 
