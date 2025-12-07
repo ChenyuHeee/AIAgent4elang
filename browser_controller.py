@@ -404,6 +404,50 @@ class BrowserController:
         # Final attempt with force on locator.
         await loc.click(timeout=6000, force=True)
 
+    async def click_praxis_option(self, item_index: int, option_text: str) -> bool:
+        """Click option inside a specific .praxis-item by index (0-based). Returns True if clicked."""
+        # Clear overlays first.
+        try:
+            await self.page.evaluate(
+                """
+                (() => {
+                  document.querySelectorAll('.van-overlay').forEach(el => { el.style.display = 'none'; el.style.pointerEvents = 'none'; });
+                  const close = document.querySelector('.van-action-sheet__close');
+                  if (close) close.click();
+                })();
+                """
+            )
+        except Exception:
+            pass
+
+        norm = lambda s: (s or "").replace("\u00a0", " ").strip()
+        target_text = norm(option_text)
+
+        locator_item = self.page.locator(".praxis-item").nth(item_index)
+        answers = locator_item.locator(".praxis-info .answer")
+        count = await answers.count()
+        for i in range(count):
+            ans = answers.nth(i)
+            title = norm(await ans.locator(".answer-title").text_content() or "")
+            desc = norm(await ans.locator(".answer-desc").text_content() or "")
+            combined = (title + (" " + desc if desc else "")).strip() if title else desc
+            if combined == target_text or desc == target_text or title == target_text:
+                try:
+                    await ans.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    await ans.click(timeout=6000)
+                    return True
+                except Exception:
+                    pass
+                try:
+                    await ans.click(timeout=6000, force=True)
+                    return True
+                except Exception:
+                    pass
+        return False
+
     async def fill_answer(self, locator: str, text: str) -> None:
         await self.page.locator(locator).fill(text)
 

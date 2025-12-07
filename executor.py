@@ -129,12 +129,21 @@ async def handle_single_question(
         print(f"【答案】第{idx}题：{ans_text}")
 
         if isinstance(answer.get("answer"), list) and opts_list:
-            first_option = answer["answer"][0]
-            locators = build_text_locators(str(first_option))
-            candidate = select_best(locators)
-            if candidate:
-                await browser.click_option(candidate.locator)
-                log_struct(logger, "clicked", idx=idx, locator=candidate.locator)
+            first_option = str(answer["answer"][0])
+
+            clicked = False
+            if items:
+                # Prefer item-scoped click to avoid cross-question collisions.
+                clicked = await browser.click_praxis_option(idx - 1, first_option)
+                if clicked:
+                    log_struct(logger, "clicked", idx=idx, mode="praxis", option=first_option)
+
+            if not clicked:
+                locators = build_text_locators(first_option)
+                candidate = select_best(locators)
+                if candidate:
+                    await browser.click_option(candidate.locator)
+                    log_struct(logger, "clicked", idx=idx, locator=candidate.locator)
 
         collected_answers.append(f"第{idx}题：{ans_text}")
 
