@@ -1,0 +1,32 @@
+deepseek:
+  api_key: "env:DEEPSEEK_API_KEY"
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  temperature: 0.2
+  max_tokens: 1024
+
+playwright:
+  browser: "chromium"
+  headless: false
+  user_data_dir: "./user_data"
+  default_timeout_ms: 15000
+  start_url: "https://elang.zju.edu.cn/#/read/index"  # 可填入默认打开的页面 URL，留空则不自动跳转
+  context:
+    viewport:
+      width: 1280
+      height: 720
+    ignore_https_errors: false
+
+paths:
+  logs: "./data/logs"
+  screenshots: "./data/screenshots"
+
+agent:
+  answer_schema: "single|multi|fill"
+  max_retries: 2
+  enable_ocr_fallback: false
+
+ocr:
+  mode: "swift_vision"  # swift_vision | rapidocr
+  script_path: "./scripts/vision_cli.swift"
+  service_url: "http://localhost:9000/ocr"

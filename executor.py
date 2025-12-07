@@ -1,0 +1,107 @@
+import asyncio
+import pathlib
+from typing import Any, Dict, List
+
+import yaml
+from dotenv import load_dotenv
+
+from browser_controller import BrowserController, PlaywrightConfig, load_config as load_pw_config
+from nlp_agent import DeepSeekClient, answer_question, load_config as load_ds_config
+from selector_finder import build_text_locators, select_best
+from utils.logger import log_struct, setup_logger
+from vision_ocr import OCRConfig, VisionOCR, load_config as load_ocr_config
+
+
+def read_config(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def ensure_dirs(paths: Dict[str, str]) -> None:
+    for target in paths.values():
+        pathlib.Path(target).mkdir(parents=True, exist_ok=True)
+
+
+async def handle_single_question(
+    browser: BrowserController,
+    nlp: DeepSeekClient,
+    ocr: VisionOCR,
+    logger,
+    config: Dict[str, Any],
+) -> None:
+    await browser.start()
+    page = browser.page
+    input("Manual step: open the question page, then press Enter to proceed...")
+
+    dom = await browser.read_question_block()
+    question = dom.get("question", "").strip()
+    options: List[str] = dom.get("options", [])
+    preview = dom.get("debug_body_preview", "")
+    log_struct(logger, "dom_parsed", question_len=len(question), options=len(options), preview=preview[:200])
+
+    if not options:
+        dump_path = pathlib.Path(config["paths"].get("logs", "./data/logs")) / "page_dump.html"
+        html = await browser.page.content()
+        dump_path.write_text(html, encoding="utf-8")
+        screenshot_path = pathlib.Path(config["paths"].get("screenshots", "./data/screenshots")) / "no_options.png"
+        await browser.screenshot(str(screenshot_path))
+        log_struct(
+            logger,
+            "options_missing",
+            dump=str(dump_path),
+            screenshot=str(screenshot_path),
+            hint="check dump for option DOM; may be iframe/shadow/root attrs",
+        )
+        return
+
+    if not question and config.get("agent", {}).get("enable_ocr_fallback", False):
+        screenshot_path = pathlib.Path(config["paths"]["screenshots"]) / "ocr_fallback.png"
+        await browser.screenshot(str(screenshot_path))
+        ocr_result = await ocr.run(str(screenshot_path))
+        question = ocr_result.get("text", "")
+        log_struct(logger, "ocr_used", text_len=len(question))
+
+    if not question:
+        dump_path = pathlib.Path(config["paths"]["logs"]) / "page_dump.txt"
+        dump_path.write_text(preview, encoding="utf-8")
+        log_struct(logger, "question_missing", hint="adjust selectors in read_question_block", dump=str(dump_path))
+        return
+
+    answer = await answer_question(nlp, question, options, "single")
+    log_struct(logger, "model_answer", raw=answer)
+
+    if isinstance(answer.get("answer"), list) and options:
+        first_option = answer["answer"][0]
+        locators = build_text_locators(str(first_option))
+        candidate = select_best(locators)
+        if candidate:
+            await browser.click_option(candidate.locator)
+            log_struct(logger, "clicked", locator=candidate.locator)
+
+    await browser.screenshot(str(pathlib.Path(config["paths"]["screenshots"]) / "after.png"))
+
+
+async def main() -> None:
+    load_dotenv()
+    config = read_config("config.yaml")
+    ensure_dirs(config.get("paths", {}))
+
+    logger = setup_logger("agent", config["paths"].get("logs", "./data/logs"))
+    pw_config: PlaywrightConfig = load_pw_config(config)
+    ds_config = load_ds_config(config)
+    ocr_config: OCRConfig = load_ocr_config(config)
+
+    browser = BrowserController(pw_config)
+    ocr = VisionOCR(ocr_config)
+    nlp = DeepSeekClient(ds_config)
+
+    try:
+        await handle_single_question(browser, nlp, ocr, logger, config)
+        input("Press Enter after you manually close the browser window to exit...")
+    finally:
+        await browser.stop()
+        await nlp.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

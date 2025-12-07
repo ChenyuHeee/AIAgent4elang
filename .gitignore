@@ -1,0 +1,12 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.log
+user_data/
+data/logs/
+data/screenshots/
+*.png
+playwright/.cache/
