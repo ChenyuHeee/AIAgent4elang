@@ -29,8 +29,13 @@ async def handle_single_question(
     logger,
     config: Dict[str, Any],
 ) -> None:
-    await browser.start()
-    page = browser.page
+    # Ensure browser is running; if user closed the window, signal caller to exit.
+    try:
+        page = browser.page
+    except RuntimeError:
+        page = await browser.start()
+    if page.is_closed():
+        raise RuntimeError("Browser closed by user")
     input("Manual step: open the question page, then press Enter to proceed...")
 
     dom = await browser.read_question_block()
@@ -96,8 +101,27 @@ async def main() -> None:
     nlp = DeepSeekClient(ds_config)
 
     try:
-        await handle_single_question(browser, nlp, ocr, logger, config)
-        input("Press Enter after you manually close the browser window to exit...")
+        # Start once; allow multiple Q&A rounds until the user closes the browser.
+        await browser.start()
+        while True:
+            try:
+                await handle_single_question(browser, nlp, ocr, logger, config)
+            except RuntimeError as exc:
+                if "Browser closed" in str(exc):
+                    break
+                raise
+            try:
+                prompt = "Press Enter to start the next question (or close the browser window to finish)..."
+                input(prompt)
+            except EOFError:
+                break
+
+            # If the user closed the browser window, stop the loop.
+            try:
+                if browser.page.is_closed():
+                    break
+            except Exception:
+                break
     finally:
         await browser.stop()
         await nlp.close()

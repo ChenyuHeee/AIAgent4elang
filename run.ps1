@@ -11,6 +11,8 @@ $Venv = Join-Path $Root ".venv"
 $Py = Join-Path $Venv "Scripts/python.exe"
 $Pip = Join-Path $Venv "Scripts/pip.exe"
 
+Set-Location $Root
+
 if (-not (Test-Path $Venv)) {
     Write-Host "[setup] creating venv at $Venv"
     python -m venv $Venv
