@@ -1,6 +1,7 @@
 import asyncio
+import json
 import pathlib
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -91,6 +92,30 @@ async def handle_single_question(
     tasks = items if items else [{"question": question, "options": options, "preview": preview}]
     collected_answers: List[str] = []
 
+    batch_results: Dict[int, Any] = {}
+    if len(tasks) > 1:
+        try:
+            payload = [
+                {"idx": i + 1, "question": t.get("question", ""), "options": t.get("options", []), "type": "single"}
+                for i, t in enumerate(tasks)
+            ]
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an exam assistant. Given multiple questions with options, respond ONLY with JSON array of objects: [{\"idx\": number, \"answer\": string or array}]. Maintain order by idx. Do not add text outside JSON.",
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ]
+            raw = await nlp.chat(messages)
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict) and "idx" in item and "answer" in item:
+                        batch_results[int(item["idx"])] = item
+            log_struct(logger, "model_answer_batch", count=len(batch_results))
+        except Exception as exc:  # noqa: BLE001
+            log_struct(logger, "model_answer_batch_failed", error=str(exc))
+
     for idx, item in enumerate(tasks, start=1):
         q = (item.get("question") or "").strip()
         opts_list: List[str] = item.get("options", []) or []
@@ -125,8 +150,13 @@ async def handle_single_question(
             log_struct(logger, "question_missing", idx=idx, hint="未识别到题干，请调整 read_question_block 的选择器", dump=str(dump_path))
             continue
 
-        answer = await answer_question(nlp, q, opts_list, "single")
-        log_struct(logger, "model_answer", idx=idx, raw=answer)
+        answer: Dict[str, Any]
+        if batch_results.get(idx):
+            answer = {"type": "single", "answer": batch_results[idx].get("answer")}
+            log_struct(logger, "model_answer", idx=idx, raw=answer, source="batch")
+        else:
+            answer = await answer_question(nlp, q, opts_list, "single")
+            log_struct(logger, "model_answer", idx=idx, raw=answer, source="single")
 
         ans_val = answer.get("answer")
         if isinstance(ans_val, list):
