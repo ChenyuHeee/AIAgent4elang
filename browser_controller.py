@@ -364,7 +364,8 @@ class BrowserController:
             pass
 
     async def click_option(self, locator: str) -> None:
-        await self.page.locator(locator).click()
+        # Use first() to avoid strict mode violations when multiple matches exist.
+        await self.page.locator(locator).first.click()
 
     async def fill_answer(self, locator: str, text: str) -> None:
         await self.page.locator(locator).fill(text)
