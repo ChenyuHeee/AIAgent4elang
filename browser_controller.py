@@ -363,20 +363,28 @@ class BrowserController:
         except Exception:
             pass
 
-    async def click_option(self, locator: str) -> None:
-        # Clear overlays that may block clicks (common: van-overlay from action sheet).
+    async def dismiss_popups(self) -> None:
+        # Hide common overlays/popups that may block clicks or appear after accidental taps.
         try:
             await self.page.evaluate(
                 """
                 (() => {
-                  document.querySelectorAll('.van-overlay').forEach(el => { el.style.display = 'none'; el.style.pointerEvents = 'none'; });
-                  const close = document.querySelector('.van-action-sheet__close');
-                  if (close) close.click();
+                  const hide = (sel) => document.querySelectorAll(sel).forEach(el => {
+                    el.style.display = 'none';
+                    el.style.visibility = 'hidden';
+                    el.style.pointerEvents = 'none';
+                  });
+                  hide('.van-overlay, .van-popup, .van-dialog, .van-toast, .word-pop, .word-popup, .popover, [class*="popup"], [role="dialog"]');
+                  const closeBtns = document.querySelectorAll('.van-action-sheet__close, .van-popup__close-icon, .van-dialog__confirm, .van-dialog__cancel, .popup-close');
+                  closeBtns.forEach(btn => { try { btn.click(); } catch (e) {} });
                 })();
                 """
             )
         except Exception:
             pass
+
+    async def click_option(self, locator: str) -> None:
+        await self.dismiss_popups()
 
         loc = self.page.locator(locator).first
 
@@ -406,19 +414,7 @@ class BrowserController:
 
     async def click_praxis_option(self, item_index: int, option_text: str) -> bool:
         """Click option inside a specific .praxis-item by index (0-based). Returns True if clicked."""
-        # Clear overlays first.
-        try:
-            await self.page.evaluate(
-                """
-                (() => {
-                  document.querySelectorAll('.van-overlay').forEach(el => { el.style.display = 'none'; el.style.pointerEvents = 'none'; });
-                  const close = document.querySelector('.van-action-sheet__close');
-                  if (close) close.click();
-                })();
-                """
-            )
-        except Exception:
-            pass
+        await self.dismiss_popups()
 
         norm = lambda s: (s or "").replace("\u00a0", " ").strip()
         target_text = norm(option_text)

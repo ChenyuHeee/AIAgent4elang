@@ -36,8 +36,10 @@ async def handle_single_question(
         page = await browser.start()
     if page.is_closed():
         raise RuntimeError("浏览器已关闭")
+    await browser.dismiss_popups()
     input("请手动在浏览器中打开题目页面，准备好后按回车继续…")
 
+    await browser.dismiss_popups()
     dom = await browser.read_question_block()
     question = dom.get("question", "").strip()
     options: List[str] = dom.get("options", [])
