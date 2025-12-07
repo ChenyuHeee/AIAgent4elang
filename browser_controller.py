@@ -364,6 +364,20 @@ class BrowserController:
             pass
 
     async def click_option(self, locator: str) -> None:
+        # Clear overlays that may block clicks (common: van-overlay from action sheet).
+        try:
+            await self.page.evaluate(
+                """
+                (() => {
+                  document.querySelectorAll('.van-overlay').forEach(el => { el.style.display = 'none'; el.style.pointerEvents = 'none'; });
+                  const close = document.querySelector('.van-action-sheet__close');
+                  if (close) close.click();
+                })();
+                """
+            )
+        except Exception:
+            pass
+
         # Use first() to avoid strict mode violations when multiple matches exist.
         await self.page.locator(locator).first.click()
 
