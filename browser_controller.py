@@ -448,6 +448,12 @@ class BrowserController:
                     pass
         return False
 
+    async def safe_stop(self) -> None:
+        try:
+            await self.stop()
+        except Exception:
+            pass
+
     async def fill_answer(self, locator: str, text: str) -> None:
         await self.page.locator(locator).fill(text)
 

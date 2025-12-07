@@ -134,7 +134,10 @@ async def handle_single_question(
             clicked = False
             if items:
                 # Prefer item-scoped click to avoid cross-question collisions.
-                clicked = await browser.click_praxis_option(idx - 1, first_option)
+                try:
+                    clicked = await browser.click_praxis_option(idx - 1, first_option)
+                except Exception as exc:  # noqa: BLE001
+                    log_struct(logger, "click_failed", idx=idx, mode="praxis", error=str(exc))
                 if clicked:
                     log_struct(logger, "clicked", idx=idx, mode="praxis", option=first_option)
 
@@ -142,8 +145,11 @@ async def handle_single_question(
                 locators = build_text_locators(first_option)
                 candidate = select_best(locators)
                 if candidate:
-                    await browser.click_option(candidate.locator)
-                    log_struct(logger, "clicked", idx=idx, locator=candidate.locator)
+                    try:
+                        await browser.click_option(candidate.locator)
+                        log_struct(logger, "clicked", idx=idx, locator=candidate.locator)
+                    except Exception as exc:  # noqa: BLE001
+                        log_struct(logger, "click_failed", idx=idx, locator=candidate.locator, error=str(exc))
 
         collected_answers.append(f"第{idx}题：{ans_text}")
 
@@ -176,10 +182,14 @@ async def main() -> None:
                 if "浏览器已关闭" in str(exc):
                     break
                 raise
+            except KeyboardInterrupt:
+                break
             try:
                 prompt = "按回车开始下一题（直接关闭浏览器窗口则结束）…"
                 input(prompt)
             except EOFError:
+                break
+            except KeyboardInterrupt:
                 break
 
             # If the user closed the browser window, stop the loop.
@@ -189,8 +199,14 @@ async def main() -> None:
             except Exception:
                 break
     finally:
-        await browser.stop()
-        await nlp.close()
+        try:
+            await browser.stop()
+        except Exception:
+            pass
+        try:
+            await nlp.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
