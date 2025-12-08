@@ -259,31 +259,35 @@ class BrowserController:
                 """
             )
 
-            # If we have a Praxis block with multiple fill blanks, synthesize per-blank items using surrounding text and word bank.
+            # If we have Praxis blocks with fill blanks, synthesize per-block, per-blank items using surrounding text and word bank.
             fill_items = None
             try:
                 fill_items = await frame.evaluate(
                     r"""
                     (() => {
-                        const block = document.querySelector('.praxis-item');
-                        if (!block) return null;
-                        const bankNode = block.querySelector('.wrap-text');
-                        const bankText = bankNode ? (bankNode.innerText || '').replace(/\s+/g, ' ').trim() : '';
-                        const bankOptions = bankText ? bankText.split(',').map(t => t.trim()).filter(Boolean) : [];
-                        const inputs = Array.from(block.querySelectorAll('input.input-answer'));
-                        if (!inputs.length) return null;
-                        const blanks = inputs.map((input, idx) => {
-                            const box = input.closest('.input-answer-box');
-                            const prev = box && box.previousElementSibling ? (box.previousElementSibling.innerText || '') : '';
-                            const next = box && box.nextElementSibling ? (box.nextElementSibling.innerText || '') : '';
-                            const before = prev.replace(/\s+/g, ' ').trim();
-                            const after = next.replace(/\s+/g, ' ').trim();
-                            return { idx: idx + 1, before, after };
-                        });
-                        const items = blanks.map(b => {
-                            const question = `填空${b.idx}: ${b.before} ____ ${b.after}`.trim();
-                            return { idx: b.idx - 1, question, options: bankOptions, preview: question };
-                        });
+                        const toClean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+                        const blocks = Array.from(document.querySelectorAll('.praxis-item'));
+                        if (!blocks.length) return null;
+                        let idx = 0;
+                        const items = [];
+                        for (const block of blocks) {
+                            const bankNode = block.querySelector('.wrap-text');
+                            const bankText = bankNode ? toClean(bankNode.innerText || '') : '';
+                            const bankOptions = bankText ? bankText.split(',').map(t => t.trim()).filter(Boolean) : [];
+                            const inputs = Array.from(block.querySelectorAll('input.input-answer'));
+                            if (!inputs.length) continue;
+                            for (const input of inputs) {
+                                idx += 1;
+                                const box = input.closest('.input-answer-box');
+                                const prev = box && box.previousElementSibling ? (box.previousElementSibling.innerText || '') : '';
+                                const next = box && box.nextElementSibling ? (box.nextElementSibling.innerText || '') : '';
+                                const before = toClean(prev);
+                                const after = toClean(next);
+                                const question = `填空${idx}: ${before} ____ ${after}`.trim();
+                                items.push({ idx: idx - 1, question, options: bankOptions, preview: question });
+                            }
+                        }
+                        if (!items.length) return null;
                         return { items };
                     })();
                     """
