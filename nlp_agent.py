@@ -49,8 +49,10 @@ class DeepSeekClient:
 
 def build_prompt(question: str, options: List[str], q_type: str) -> List[Dict[str, str]]:
     sys_msg = (
-        "You are an exam assistant. Given a question, options, and type, respond strictly with JSON "
-        "{\"type\": <single|multi|fill>, \"answer\": [...] or string}."
+        "You are a careful exam assistant. Use only the provided options; never invent new text. "
+        "Return pure JSON with no extra words: {\"type\": <single|multi|fill>, \"answer\": [...] or string}. "
+        "For single/multi choice, output an array of the exact option strings (keep any letter prefixes). "
+        "For fill-in, output a short string answer. If unsure, choose the most plausible option from the list."
     )
     user_payload = {"question": question, "options": options, "type": q_type}
     return [

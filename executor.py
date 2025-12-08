@@ -60,7 +60,16 @@ async def handle_single_question(
         items=len(items),
     )
 
-    if not options:
+    # Always dump the latest page HTML for debugging multi-question/fill pages.
+    try:
+        dump_path = pathlib.Path(config["paths"].get("logs", "./data/logs")) / "page_dump_debug.html"
+        html = await browser.page.content()
+        dump_path.write_text(html, encoding="utf-8")
+        log_struct(logger, "page_dump_saved", path=str(dump_path))
+    except Exception:
+        pass
+
+    if not options and not items:
         dump_path = pathlib.Path(config["paths"].get("logs", "./data/logs")) / "page_dump.html"
         html = await browser.page.content()
         dump_path.write_text(html, encoding="utf-8")
@@ -71,9 +80,12 @@ async def handle_single_question(
             "options_missing",
             dump=str(dump_path),
             screenshot=str(screenshot_path),
-            hint="选项未识别：请查看 page_dump.html，可能在 iframe/shadow 里，或需要新的选择器",
+            hint="未识别到选项，将尝试以填空题处理；请检查 page_dump.html 以优化选择器",
         )
-        return
+
+    if not question and preview:
+        question = preview[:300]
+        log_struct(logger, "question_preview_fallback", text_len=len(question))
 
     if not question and config.get("agent", {}).get("enable_ocr_fallback", False):
         screenshot_path = pathlib.Path(config["paths"]["screenshots"]) / "ocr_fallback.png"
@@ -95,14 +107,23 @@ async def handle_single_question(
     batch_results: Dict[int, Any] = {}
     if len(tasks) > 1:
         try:
-            payload = [
-                {"idx": i + 1, "question": t.get("question", ""), "options": t.get("options", []), "type": "single"}
-                for i, t in enumerate(tasks)
-            ]
+            payload = []
+            for i, t in enumerate(tasks):
+                opts = t.get("options", []) or []
+                qtext = (t.get("question") or "").strip()
+                if not qtext:
+                    qtext = (t.get("preview") or preview or "")[:300]
+                qtype = "single" if opts else "fill"
+                payload.append({"idx": i + 1, "question": qtext, "options": opts, "type": qtype})
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an exam assistant. Given multiple questions with options, respond ONLY with JSON array of objects: [{\"idx\": number, \"answer\": string or array}]. Maintain order by idx. Do not add text outside JSON.",
+                    "content": (
+                        "You are a careful exam assistant. Use only provided options when they exist; never invent new options. "
+                        "Return ONLY a JSON array: [{\"idx\": number, \"answer\": array or string}]. "
+                        "For choice questions, answer is an array of the original option text (keep any letter prefixes). "
+                        "For fill-in questions (no options), answer is a concise string. Keep items ordered by idx. No extra words."
+                    ),
                 },
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ]
@@ -112,7 +133,12 @@ async def handle_single_question(
                 for item in parsed:
                     if isinstance(item, dict) and "idx" in item and "answer" in item:
                         batch_results[int(item["idx"])] = item
-            log_struct(logger, "model_answer_batch", count=len(batch_results))
+            if len(batch_results) < len(tasks):
+                debug_path = pathlib.Path(config["paths"].get("logs", "./data/logs")) / "llm_batch_debug.json"
+                debug_path.write_text(json.dumps({"payload": payload, "raw": raw}, ensure_ascii=False, indent=2), encoding="utf-8")
+                log_struct(logger, "model_answer_batch_partial", count=len(batch_results), expected=len(tasks), dump=str(debug_path))
+            else:
+                log_struct(logger, "model_answer_batch", count=len(batch_results))
         except Exception as exc:  # noqa: BLE001
             log_struct(logger, "model_answer_batch_failed", error=str(exc))
 
@@ -122,20 +148,20 @@ async def handle_single_question(
         log_struct(logger, "dom_item", idx=idx, question_len=len(q), options=len(opts_list))
 
         if not opts_list:
-            if not items:  # single-question flow keeps previous handling
-                dump_path = pathlib.Path(config["paths"].get("logs", "./data/logs")) / "page_dump.html"
-                html = await browser.page.content()
-                dump_path.write_text(html, encoding="utf-8")
-                screenshot_path = pathlib.Path(config["paths"].get("screenshots", "./data/screenshots")) / "no_options.png"
-                await browser.screenshot(str(screenshot_path))
-                log_struct(
-                    logger,
-                    "options_missing",
-                    dump=str(dump_path),
-                    screenshot=str(screenshot_path),
-                    hint="选项未识别：请查看 page_dump.html，可能在 iframe/shadow 里，或需要新的选择器",
-                )
-            continue
+            log_struct(
+                logger,
+                "options_missing_item",
+                idx=idx,
+                hint="未识别到选项，按填空题处理；请检查页面结构或选择器",
+            )
+
+        if not q and item.get("preview"):
+            q = str(item.get("preview", ""))[:300]
+            log_struct(logger, "question_preview_fallback", idx=idx, text_len=len(q))
+
+        if not q and preview:
+            q = str(preview)[:300]
+            log_struct(logger, "question_page_preview_fallback", idx=idx, text_len=len(q))
 
         if not q and config.get("agent", {}).get("enable_ocr_fallback", False):
             screenshot_path = pathlib.Path(config["paths"]["screenshots"]) / f"ocr_fallback_{idx}.png"
@@ -150,19 +176,37 @@ async def handle_single_question(
             log_struct(logger, "question_missing", idx=idx, hint="未识别到题干，请调整 read_question_block 的选择器", dump=str(dump_path))
             continue
 
+        q_type = "single" if opts_list else "fill"
         answer: Dict[str, Any]
         if batch_results.get(idx):
-            answer = {"type": "single", "answer": batch_results[idx].get("answer")}
+            answer = {"type": q_type, "answer": batch_results[idx].get("answer")}
             log_struct(logger, "model_answer", idx=idx, raw=answer, source="batch")
         else:
-            answer = await answer_question(nlp, q, opts_list, "single")
+            answer = await answer_question(nlp, q, opts_list, q_type)
             log_struct(logger, "model_answer", idx=idx, raw=answer, source="single")
 
+        # Echo question and options for visibility.
+        print(f"【题干】第{idx}题：{q}")
+        if opts_list:
+            opts_text = " | ".join(opts_list)
+            print(f"【选项】{opts_text}")
+
         ans_val = answer.get("answer")
+        def to_label_only(val: Any) -> str:
+            # If answer like 'A.xxx' or 'A ' keep leading token for summary; else keep raw.
+            s = str(val)
+            parts = s.split(None, 1)
+            if parts and len(parts[0]) <= 3 and parts[0].rstrip('.').isalpha():
+                return parts[0].rstrip('.')
+            # Also handle formats like 'A.' or 'A、B'
+            return s
+
         if isinstance(ans_val, list):
             ans_text = "、".join([str(a) for a in ans_val])
+            summary_label = "、".join([to_label_only(a) for a in ans_val])
         else:
             ans_text = str(ans_val)
+            summary_label = to_label_only(ans_val)
         print(f"【答案】第{idx}题：{ans_text}")
 
         if isinstance(answer.get("answer"), list) and opts_list:
@@ -188,7 +232,7 @@ async def handle_single_question(
                     except Exception as exc:  # noqa: BLE001
                         log_struct(logger, "click_failed", idx=idx, locator=candidate.locator, error=str(exc))
 
-        collected_answers.append(f"第{idx}题：{ans_text}")
+        collected_answers.append(f"第{idx}题：{summary_label}")
 
     await browser.screenshot(str(pathlib.Path(config["paths"]["screenshots"]) / "after.png"))
     if collected_answers:

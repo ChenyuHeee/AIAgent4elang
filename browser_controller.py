@@ -54,10 +54,56 @@ class BrowserController:
             loc = self.page.locator(sel)
             if await loc.count() > 0:
                 try:
-                    await loc.first.click(timeout=2000)
+                    first = loc.first
+                    txt = (await first.inner_text()) if first else ""
+                    # Avoid toggling if already expanded or if the button is a collapse control.
+                    aria_expanded = await first.get_attribute("aria-expanded") if first else None
+                    if txt and ("收起" in txt or "隐藏" in txt):
+                        continue
+                    if aria_expanded and aria_expanded.lower() == "true":
+                        continue
+                    await first.click(timeout=2000)
                     await self.page.wait_for_timeout(300)
                 except Exception:  # noqa: BLE001
                     continue
+
+    async def _open_fill_options(self, frame) -> None:
+        """Best-effort click to reveal dropdown options for fill/select fields."""
+        try:
+            await frame.evaluate(
+                """
+                (() => {
+                  const selectors = [
+                    '[role="combobox"]',
+                    'input[aria-haspopup="listbox"]',
+                    'input[aria-expanded="false"]',
+                    '.van-field__control',
+                    '.el-select',
+                    '.ant-select',
+                    '.ivu-select',
+                    '.select',
+                    '.select-trigger',
+                    '.dropdown-trigger',
+                    '[data-dropdown]',
+                    '[data-select]'
+                  ];
+                  const seen = new Set();
+                  for (const sel of selectors) {
+                    const nodes = Array.from(document.querySelectorAll(sel));
+                    for (const el of nodes) {
+                      if (seen.has(el)) continue;
+                      seen.add(el);
+                      const disabled = el.getAttribute('disabled') || el.getAttribute('aria-disabled');
+                      if (disabled && disabled !== 'false') continue;
+                      try { el.click(); } catch (e) {}
+                    }
+                  }
+                })();
+                """
+            )
+            await frame.wait_for_timeout(200)
+        except Exception:
+            pass
 
     async def stop(self) -> None:
         if self._context:
@@ -77,6 +123,7 @@ class BrowserController:
         page = self.page
         await page.wait_for_timeout(300)  # give DOM a moment to settle
         await self.expand_collapsed_content()
+        await self._open_fill_options(page)
         await self._auto_scroll(page)
 
         async def first_non_empty(selectors: list[str]) -> str:
@@ -212,10 +259,49 @@ class BrowserController:
                 """
             )
 
+            # If we have a Praxis block with multiple fill blanks, synthesize per-blank items using surrounding text and word bank.
+            fill_items = None
+            try:
+                fill_items = await frame.evaluate(
+                    r"""
+                    (() => {
+                        const block = document.querySelector('.praxis-item');
+                        if (!block) return null;
+                        const bankNode = block.querySelector('.wrap-text');
+                        const bankText = bankNode ? (bankNode.innerText || '').replace(/\s+/g, ' ').trim() : '';
+                        const bankOptions = bankText ? bankText.split(',').map(t => t.trim()).filter(Boolean) : [];
+                        const inputs = Array.from(block.querySelectorAll('input.input-answer'));
+                        if (!inputs.length) return null;
+                        const blanks = inputs.map((input, idx) => {
+                            const box = input.closest('.input-answer-box');
+                            const prev = box && box.previousElementSibling ? (box.previousElementSibling.innerText || '') : '';
+                            const next = box && box.nextElementSibling ? (box.nextElementSibling.innerText || '') : '';
+                            const before = prev.replace(/\s+/g, ' ').trim();
+                            const after = next.replace(/\s+/g, ' ').trim();
+                            return { idx: idx + 1, before, after };
+                        });
+                        const items = blanks.map(b => {
+                            const question = `填空${b.idx}: ${b.before} ____ ${b.after}`.trim();
+                            return { idx: b.idx - 1, question, options: bankOptions, preview: question };
+                        });
+                        return { items };
+                    })();
+                    """
+                )
+            except Exception:
+                fill_items = None
+
             praxis_focus = None
             if praxis_items:
                 # Pick the first Praxis block as the default focus; we'll still return all items.
                 praxis_focus = praxis_items[0]
+            # Override items with synthesized fill blanks if present (handles multi-blank fill pages).
+            if fill_items and isinstance(fill_items, dict) and fill_items.get("items"):
+                praxis_items = fill_items["items"]
+                praxis_focus = praxis_items[0] if praxis_items else praxis_focus
+
+            # Try to open dropdowns/blank fields before pulling options.
+            await self._open_fill_options(frame)
 
             async def f_first_non_empty(selectors: list[str]) -> str:
                 for sel in selectors:
@@ -369,14 +455,20 @@ class BrowserController:
             await self.page.evaluate(
                 """
                 (() => {
-                  const hide = (sel) => document.querySelectorAll(sel).forEach(el => {
-                    el.style.display = 'none';
-                    el.style.visibility = 'hidden';
-                    el.style.pointerEvents = 'none';
-                  });
-                  hide('.van-overlay, .van-popup, .van-dialog, .van-toast, .word-pop, .word-popup, .popover, [class*="popup"], [role="dialog"]');
-                  const closeBtns = document.querySelectorAll('.van-action-sheet__close, .van-popup__close-icon, .van-dialog__confirm, .van-dialog__cancel, .popup-close');
-                  closeBtns.forEach(btn => { try { btn.click(); } catch (e) {} });
+                                    const shouldSkip = (el) => {
+                                        const text = (el.innerText || '').trim();
+                                        if (!text) return false;
+                                        return text.includes('原文') || text.includes('全文');
+                                    };
+                                    const hide = (sel) => document.querySelectorAll(sel).forEach(el => {
+                                        if (shouldSkip(el)) return;
+                                        el.style.display = 'none';
+                                        el.style.visibility = 'hidden';
+                                        el.style.pointerEvents = 'none';
+                                    });
+                                    hide('.van-overlay, .van-popup, .van-dialog, .van-toast, .word-pop, .word-popup, .popover');
+                                    const closeBtns = document.querySelectorAll('.van-action-sheet__close, .van-popup__close-icon, .van-dialog__confirm, .van-dialog__cancel, .popup-close');
+                                    closeBtns.forEach(btn => { try { btn.click(); } catch (e) {} });
                 })();
                 """
             )
